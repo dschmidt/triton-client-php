@@ -1,0 +1,27 @@
+{
+    "name": "iabg/triton-php-client",
+    "description": "PHP client for Triton Inference Server streaming",
+    "require": {
+        "php": ">=7.4",
+        "grpc/grpc": "^1.42",
+        "google/protobuf": "^3.21",
+        "protobuf-php/protobuf-plugin": "^0.1.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Inference\\": "generated/Inference/",
+            "GPBMetadata\\": "generated/GPBMetadata/"
+        }
+    },
+    "scripts": {
+        "update-protos": [
+            "curl -L https://raw.githubusercontent.com/triton-inference-server/common/main/protobuf/grpc_service.proto -o grpc_service.proto",
+            "curl -L https://raw.githubusercontent.com/triton-inference-server/common/main/protobuf/model_config.proto -o model_config.proto"
+        ],
+        "generate-proto": [
+            "vendor/protobuf-php/protobuf-plugin/bin/protobuf --out=generated -i . grpc_service.proto model_config.proto"
+        ],
+        "post-install-cmd": ["@generate-proto"],
+        "post-update-cmd": ["@generate-proto"]
+    }
+}
