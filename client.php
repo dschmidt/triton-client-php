@@ -41,17 +41,19 @@ class TritonStreamingClient {
         );
     }
 
-    public function streamInference($prompt, $maxTokens = 128) {
+    public function streamInference($conversation, $maxTokens = 128) {
         $seenAny = false;
 
         // Prepare inputs
         $textInput = new InferInputTensor();
-        $textInput->setName('text_input');
+        $textInput->setName('conversation');
         $textInput->setDatatype('BYTES');
         $textInput->setShape([1, 1]);
 
         $textContents = new InferTensorContents();
-        $textContents->setBytesContents([$prompt]);
+        $textContents->setBytesContents([
+            json_encode($conversation, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        ]);
         $textInput->setContents($textContents);
 
         $maxTokensInput = new InferInputTensor();
@@ -163,10 +165,14 @@ function main() {
     global $argv;
 
     $prompt = isset($argv[1]) ? $argv[1] : 'Sag hi in einem kurzen Satz.';
+    $conversation = [
+        ["role" => "system", "content" => "Antworte auf Deutsch."],
+        ["role" => "user", "content" => $prompt]
+    ];
     $maxTokens = isset($argv[2]) ? intval($argv[2]) : 128;
 
     $client = new TritonStreamingClient();
-    $client->streamInference($prompt, $maxTokens);
+    $client->streamInference($conversation, $maxTokens);
 }
 
 if (php_sapi_name() === 'cli') {
