@@ -29,10 +29,12 @@ class TritonStreamingClient {
     private $client;
     private $tritonUrl;
     private $modelName;
+    private $tritonModel;
 
     public function __construct() {
         $this->tritonUrl = getenv('TRITON_URL') ?: 'localhost:8001';
-        $this->modelName = getenv('MODEL_NAME') ?: 'mistral-streaming';
+        $this->modelName = getenv('MODEL_NAME') ?: 'mistral-7b-instruct-v0.3';
+        $this->tritonModel = getenv('TRITON_MODEL') ?: 'streaming';
 
         // Create gRPC client
         $this->client = new GRPCInferenceServiceClient(
@@ -56,6 +58,16 @@ class TritonStreamingClient {
         ]);
         $textInput->setContents($textContents);
 
+        // Model name — which vLLM backend model to use
+        $modelNameInput = new InferInputTensor();
+        $modelNameInput->setName('model_name');
+        $modelNameInput->setDatatype('BYTES');
+        $modelNameInput->setShape([1, 1]);
+
+        $modelNameContents = new InferTensorContents();
+        $modelNameContents->setBytesContents([$this->modelName]);
+        $modelNameInput->setContents($modelNameContents);
+
         $maxTokensInput = new InferInputTensor();
         $maxTokensInput->setName('max_tokens');
         $maxTokensInput->setDatatype('INT32');
@@ -72,11 +84,11 @@ class TritonStreamingClient {
         $finalOutput = new InferRequestedOutputTensor();
         $finalOutput->setName('is_final');
 
-        // Create request
+        // Create request — always target the "streaming" wrapper model
         $request = new ModelInferRequest();
-        $request->setModelName($this->modelName);
+        $request->setModelName($this->tritonModel);
         $request->setId('req-1');
-        $request->setInputs([$textInput, $maxTokensInput]);
+        $request->setInputs([$textInput, $modelNameInput, $maxTokensInput]);
         $request->setOutputs([$textOutput, $finalOutput]);
 
         try {
@@ -102,16 +114,16 @@ class TritonStreamingClient {
                 $isFinal = false;
 
                 // Use raw output contents if available
+                // Triton raw BYTES format: 4-byte LE length prefix + string bytes per element
                 $rawContents = $inferResponse->getRawOutputContents();
                 if (!empty($rawContents)) {
-                    // First raw content is typically the text output
-                    if (isset($rawContents[0])) {
-                        $textChunk = $rawContents[0];
+                    if (isset($rawContents[0]) && strlen($rawContents[0]) >= 4) {
+                        $len = unpack('V', substr($rawContents[0], 0, 4))[1];
+                        $textChunk = substr($rawContents[0], 4, $len);
                     }
-                    // Check if we have is_final indicator in second raw content or detect end
-                    if (count($rawContents) > 1 && isset($rawContents[1])) {
-                        // Some models put boolean flags in second position
-                        $isFinal = !empty(trim($rawContents[1]));
+                    if (count($rawContents) > 1 && isset($rawContents[1]) && strlen($rawContents[1]) >= 1) {
+                        // is_final is a single BOOL byte
+                        $isFinal = ord($rawContents[1][0]) !== 0;
                     }
                 } else {
                     // Fallback to structured output parsing
@@ -178,4 +190,3 @@ function main() {
 if (php_sapi_name() === 'cli') {
     main();
 }
-?>
