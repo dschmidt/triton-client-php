@@ -45,7 +45,7 @@ class TritonStreamingClient {
 
     public function streamInference($conversation, $maxTokens = 128) {
         $seenAny = false;
-        $lastChunkType = 'response';
+        $lastChannel = 'content';
 
         // Prepare inputs
         $textInput = new InferInputTensor();
@@ -82,8 +82,8 @@ class TritonStreamingClient {
         $textOutput = new InferRequestedOutputTensor();
         $textOutput->setName('text_output');
 
-        $chunkTypeOutput = new InferRequestedOutputTensor();
-        $chunkTypeOutput->setName('chunk_type');
+        $channelOutput = new InferRequestedOutputTensor();
+        $channelOutput->setName('channel');
 
         $finalOutput = new InferRequestedOutputTensor();
         $finalOutput->setName('is_final');
@@ -93,7 +93,7 @@ class TritonStreamingClient {
         $request->setModelName($this->tritonModel);
         $request->setId('req-1');
         $request->setInputs([$textInput, $modelNameInput, $maxTokensInput]);
-        $request->setOutputs([$textOutput, $chunkTypeOutput, $finalOutput]);
+        $request->setOutputs([$textOutput, $channelOutput, $finalOutput]);
 
         try {
             // Start streaming inference
@@ -115,12 +115,12 @@ class TritonStreamingClient {
                 $outputs = $inferResponse->getOutputs();
 
                 $textChunk = '';
-                $chunkType = 'response';
+                $channel = 'content';
                 $isFinal = false;
 
                 // Use raw output contents if available
                 // Triton raw BYTES format: 4-byte LE length prefix + string bytes per element
-                // Output order matches config.pbtxt: text_output[0], chunk_type[1], is_final[2]
+                // Output order matches config.pbtxt: text_output[0], channel[1], is_final[2]
                 $rawContents = $inferResponse->getRawOutputContents();
                 if (!empty($rawContents)) {
                     if (isset($rawContents[0]) && strlen($rawContents[0]) >= 4) {
@@ -129,7 +129,7 @@ class TritonStreamingClient {
                     }
                     if (isset($rawContents[1]) && strlen($rawContents[1]) >= 4) {
                         $len = unpack('V', substr($rawContents[1], 0, 4))[1];
-                        $chunkType = substr($rawContents[1], 4, $len);
+                        $channel = substr($rawContents[1], 4, $len);
                     }
                     if (isset($rawContents[2]) && strlen($rawContents[2]) >= 1) {
                         // is_final is a single BOOL byte
@@ -146,12 +146,12 @@ class TritonStreamingClient {
                                     $textChunk = $bytesContents[0];
                                 }
                             }
-                        } elseif ($output->getName() === 'chunk_type') {
+                        } elseif ($output->getName() === 'channel') {
                             $contents = $output->getContents();
                             if ($contents) {
                                 $bytesContents = $contents->getBytesContents();
                                 if (!empty($bytesContents)) {
-                                    $chunkType = $bytesContents[0];
+                                    $channel = $bytesContents[0];
                                 }
                             }
                         } elseif ($output->getName() === 'is_final') {
@@ -166,28 +166,32 @@ class TritonStreamingClient {
                     }
                 }
 
-                // Output the chunk with ANSI formatting for reasoning
+                // Output the chunk with ANSI formatting per channel
                 if (!empty($textChunk)) {
-                    if ($chunkType === 'reasoning') {
-                        if ($lastChunkType !== 'reasoning') {
-                            echo "\033[90m--- reasoning ---\033[0m\n";
-                            echo "\033[90m"; // grey
+                    if ($channel !== 'final' && $channel !== 'content') {
+                        // Non-final channels (analysis, commentary) in grey
+                        if ($lastChannel === 'final' || $lastChannel === 'content') {
+                            echo "\033[90m--- {$channel} ---\033[0m\n";
+                            echo "\033[90m";
+                        } elseif ($lastChannel !== $channel) {
+                            echo "\033[0m\n\033[90m--- {$channel} ---\033[0m\n";
+                            echo "\033[90m";
                         }
                         echo $textChunk;
                     } else {
-                        if ($lastChunkType === 'reasoning') {
-                            echo "\033[0m\n\033[90m--- response ---\033[0m\n";
+                        if ($lastChannel !== 'final' && $lastChannel !== 'content') {
+                            echo "\033[0m\n\033[90m--- {$channel} ---\033[0m\n";
                         }
                         echo $textChunk;
                     }
                     flush();
                     $seenAny = true;
-                    $lastChunkType = $chunkType;
+                    $lastChannel = $channel;
                 }
 
                 // Check if this is the final chunk
                 if ($isFinal) {
-                    if ($lastChunkType === 'reasoning') {
+                    if ($lastChannel !== 'final' && $lastChannel !== 'content') {
                         echo "\033[0m";
                     }
                     if ($seenAny) {
